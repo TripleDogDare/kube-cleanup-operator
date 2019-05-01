@@ -25,9 +25,9 @@ type PodController struct {
 	podInformer cache.SharedIndexInformer
 	kclient     *kubernetes.Clientset
 
-	keepSuccessHours float64
-	keepFailedHours  float64
-	keepPendingHours float64
+	keepSuccess time.Duration
+	keepFailed  time.Duration
+	keepPending time.Duration
 	dryRun           bool
 	isLegacySystem   bool
 }
@@ -69,16 +69,16 @@ func isLegacySystem(v version.Info) bool {
 }
 
 // NewPodController creates a new NewPodController
-func NewPodController(kclient *kubernetes.Clientset, namespace string, dryRun bool, opts map[string]float64) *PodController {
+func NewPodController(kclient *kubernetes.Clientset, namespace string, dryRun bool, opts map[string]time.Duration) *PodController {
 	serverVersion, err := kclient.ServerVersion()
 	if err != nil {
 		log.Fatalf("Failed to retrieve server serverVersion %v", err)
 	}
 
 	podWatcher := &PodController{
-		keepSuccessHours: opts["keepSuccessHours"],
-		keepFailedHours:  opts["keepFailedHours"],
-		keepPendingHours: opts["keepPendingHours"],
+		keepSuccess: opts["keepSuccess"],
+		keepFailed:  opts["keepFailed"],
+		keepPending: opts["keepPending"],
 		dryRun:           dryRun,
 		isLegacySystem:   isLegacySystem(*serverVersion),
 	}
@@ -140,18 +140,18 @@ func (c *PodController) Process(obj interface{}) {
 		return
 	}
 
-	executionTimeHours := c.getExecutionTimeHours(podObj)
+	timeSinceCompletion := c.getTimeSinceCompletion(podObj)
 	switch podObj.Status.Phase {
 	case v1.PodSucceeded:
-		if c.keepSuccessHours == 0 || (c.keepSuccessHours > 0 && executionTimeHours > c.keepSuccessHours) {
+		if c.keepSuccess >= 0 && timeSinceCompletion >= c.keepSuccess {
 			c.deleteObjects(podObj, parentJobName)
 		}
 	case v1.PodFailed:
-		if c.keepFailedHours == 0 || (c.keepFailedHours > 0 && executionTimeHours > c.keepFailedHours) {
+		if c.keepFailed >= 0 && timeSinceCompletion >= c.keepFailed {
 			c.deleteObjects(podObj, parentJobName)
 		}
 	case v1.PodPending:
-		if c.keepPendingHours > 0 && executionTimeHours > c.keepPendingHours {
+		if c.keepPending >= 0 && timeSinceCompletion >= c.keepPending {
 			c.deleteObjects(podObj, parentJobName)
 		}
 	default:
@@ -160,16 +160,15 @@ func (c *PodController) Process(obj interface{}) {
 }
 
 // method to calculate the hours that passed since the pod's execution end time
-func (c *PodController) getExecutionTimeHours(podObj *v1.Pod) float64 {
+func (c *PodController) getTimeSinceCompletion(podObj *v1.Pod) time.Duration {
 	currentUnixTime := time.Now()
 	for _, pc := range podObj.Status.Conditions {
 		// Looking for the time when pod's condition "Ready" became "false" (equals end of execution)
 		if pc.Type == v1.PodReady && pc.Status == v1.ConditionFalse {
-			return currentUnixTime.Sub(pc.LastTransitionTime.Time).Hours()
+			return currentUnixTime.Sub(pc.LastTransitionTime.Time)
 		}
 	}
-
-	return 0.0
+	return 0
 }
 
 func (c *PodController) deleteObjects(podObj *v1.Pod, parentJobName string) {

@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"sync"
+	"time"
 	"syscall"
 
 	"github.com/lwolf/kube-cleanup-operator/pkg/controller"
@@ -29,9 +30,9 @@ func main() {
 
 	runOutsideCluster := flag.Bool("run-outside-cluster", false, "Set this flag when running outside of the cluster.")
 	namespace := flag.String("namespace", "", "Watch only this namespaces")
-	keepSuccessHours := flag.Int("keep-successful", 0, "Number of hours to keep successful jobs, -1 - forever, 0 - never (default), >0 number of hours")
-	keepFailedHours := flag.Int("keep-failures", -1, "Number of hours to keep faild jobs, -1 - forever (default) 0 - never, >0 number of hours")
-	keepPendingHours := flag.Int("keep-pending", -1, "Number of hours to keep pending jobs, -1 - forever (default) >0 number of hours")
+	keepSuccess := flag.Duration("keep-successful", 15*time.Minute, "Duration to keep successful jobs, forever if negative, e.g. 1h15m")
+	keepFailed := flag.Duration("keep-failures", 15*time.Minute, "Duration to keep failed jobs, forever if negative, e.g. 1h15m")
+	keepPending := flag.Duration("keep-pending", 15*time.Minute, "Duration to keep pending jobs, forever if negative, e.g. 1h15m")
 	dryRun := flag.Bool("dry-run", false, "Print only, do not delete anything.")
 	flag.Parse()
 
@@ -42,17 +43,17 @@ func main() {
 		log.Fatal(err.Error())
 	}
 
-	options := map[string]float64{
-		"keepSuccessHours": float64(*keepSuccessHours),
-		"keepFailedHours":  float64(*keepFailedHours),
-		"keepPendingHours": float64(*keepPendingHours),
+	options := map[string]time.Duration{
+		"keepSuccess": *keepSuccess,
+		"keepFailed":  *keepFailed,
+		"keepPending": *keepPending,
 	}
 	if *dryRun {
 		log.Println("Performing dry run...")
 	}
 	log.Printf(
-		"Provided settings: namespace=%s, dryRun=%t, keepSuccessHours: %d, keepFailedHours: %d, keepPendingHours: %d",
-		*namespace, *dryRun, *keepSuccessHours, *keepFailedHours, *keepPendingHours,
+		"Provided settings: namespace=%s, dryRun=%t, keepSuccess: %s, keepFailed: %s, keepPending: %s",
+		*namespace, *dryRun, *keepSuccess, *keepFailed, *keepPending,
 	)
 
 	go func() {
